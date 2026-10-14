@@ -754,13 +754,21 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun buildMiracastStreamInfo(): String {
-        val sample = streamInfoTracker.sample(RtpReceiver.active?.bytesReceived ?: 0L, 0L)
+        val receiver = RtpReceiver.active
+        val sample = streamInfoTracker.sample(
+            receiver?.bytesReceived ?: 0L,
+            receiver?.framesOutput ?: 0L
+        )
         return streamInfoLines(
             resolution = StreamInfoTracker.formatResolution(StreamStats.videoWidth, StreamStats.videoHeight),
             codec = StreamInfoTracker.formatCodec("video/avc"),
-            fps = StreamInfoTracker.formatFps(0f),
+            fps = StreamInfoTracker.formatFps(sample.fps.toFloat()),
             bitrate = StreamInfoTracker.formatBitrate(sample.bitrateBps),
-            speed = StreamInfoTracker.formatSpeed(sample.bytesPerSec)
+            speed = StreamInfoTracker.formatSpeed(sample.bytesPerSec),
+            queueDepth = receiver?.let {
+                "${it.queuedPayloads}/${RtpReceiver.PAYLOAD_QUEUE_CAPACITY}"
+            } ?: "—",
+            droppedPayloads = receiver?.payloadsDropped?.toString() ?: "—"
         )
     }
 
@@ -769,7 +777,9 @@ class PlayerActivity : AppCompatActivity() {
         codec: String,
         fps: String,
         bitrate: String,
-        speed: String
+        speed: String,
+        queueDepth: String? = null,
+        droppedPayloads: String? = null
     ): String {
         val (displayW, displayH) = currentDisplaySize()
         val rows = listOf(
@@ -779,6 +789,9 @@ class PlayerActivity : AppCompatActivity() {
             "Frame rate" to fps,
             "Bitrate" to bitrate,
             "Network speed" to speed
+        ) + listOfNotNull(
+            queueDepth?.let { "RTP queue" to it },
+            droppedPayloads?.let { "Dropped payloads" to it }
         )
         return rows.joinToString("\n", prefix = "Stream information\n") { (label, value) ->
             StreamInfoTracker.padLabel(label) + value

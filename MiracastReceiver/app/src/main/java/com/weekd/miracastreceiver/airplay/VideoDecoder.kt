@@ -28,7 +28,10 @@ import com.weekd.miracastreceiver.util.Logger
  *   decoder.decodeNalUnit(nalUnitBytes)                    // call for each video chunk
  *   decoder.release()                                       // call when done
  */
-class VideoDecoder(private val outputSurface: Surface) {
+class VideoDecoder(
+    private val outputSurface: Surface,
+    private val onFrameOutput: (() -> Unit)? = null
+) {
 
     // The underlying hardware decoder — null until initialize() is called
     private var mediaCodec: MediaCodec? = null
@@ -144,7 +147,10 @@ class VideoDecoder(private val outputSurface: Surface) {
 
                     val index = codec.dequeueOutputBuffer(bufferInfo, OUTPUT_BUFFER_TIMEOUT_US)
                     when {
-                        index >= 0 -> codec.releaseOutputBuffer(index, true)
+                        index >= 0 -> {
+                            codec.releaseOutputBuffer(index, true)
+                            onFrameOutput?.invoke()
+                        }
                         index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
                             publishOutputSize(codec.outputFormat)
 

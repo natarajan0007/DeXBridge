@@ -4,7 +4,10 @@ import android.view.Surface
 import com.weekd.miracastreceiver.airplay.VideoDecoder
 import timber.log.Timber
 
-class MiracastVideoRenderer(private val surfaceProvider: () -> Surface?) {
+class MiracastVideoRenderer(
+    private val surfaceProvider: () -> Surface?,
+    private val onFrameOutput: () -> Unit = {}
+) {
 
     private var decoder: VideoDecoder? = null
     private var configuredSurface: Surface? = null
@@ -54,7 +57,9 @@ class MiracastVideoRenderer(private val surfaceProvider: () -> Surface?) {
 
         releaseDecoder()
         val (width, height) = VideoDecoder.parseSpsResolution(spsBytes) ?: (1920 to 1080)
-        decoder = VideoDecoder(surface).also { it.initialize(spsBytes, ppsBytes, width, height) }
+        decoder = VideoDecoder(surface, onFrameOutput).also {
+            it.initialize(spsBytes, ppsBytes, width, height)
+        }
         configuredSurface = surface
         awaitingKeyframe = true
         Timber.i("Miracast decoder initialized: ${width}x$height")

@@ -4,6 +4,7 @@ import android.view.Surface
 import kotlinx.coroutines.*
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import timber.log.Timber
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -19,7 +20,16 @@ class RtpReceiver(
     @Volatile
     private var isRunning = false
 
-    private val renderer = MiracastVideoRenderer(surfaceProvider)
+    private val frameOutputCount = AtomicLong()
+
+    val framesOutput: Long
+        get() = frameOutputCount.get()
+
+    @Volatile
+    var payloadsDropped = 0L
+        private set
+
+    private val renderer = MiracastVideoRenderer(surfaceProvider) { frameOutputCount.incrementAndGet() }
     private val audioPlayer = MiracastAudioPlayer()
     private val demuxer = TsDemuxer(
         onAccessUnit = renderer::onAccessUnit,
@@ -29,7 +39,10 @@ class RtpReceiver(
         onAudioDiscontinuity = audioPlayer::onDiscontinuity
     )
 
-    private val payloadQueue = ArrayBlockingQueue<ByteArray>(256)
+    private val payloadQueue = ArrayBlockingQueue<ByteArray>(PAYLOAD_QUEUE_CAPACITY)
+
+    val queuedPayloads: Int
+        get() = payloadQueue.size
 
     @Volatile
     var packetsLost = 0L
@@ -46,6 +59,8 @@ class RtpReceiver(
     var onError: ((String) -> Unit)? = null
 
     companion object {
+
+        const val PAYLOAD_QUEUE_CAPACITY = 256
 
         @Volatile
         var active: RtpReceiver? = null
@@ -108,7 +123,7 @@ class RtpReceiver(
 
                         val payload = packet.data.copyOfRange(payloadOffset, packet.length)
                         if (!payloadQueue.offer(payload)) {
-                            payloadQueue.poll()
+                            if (payloadQueue.poll() != null) payloadsDropped++
                             payloadQueue.offer(payload)
                             renderer.onDiscontinuity()
                             audioPlayer.onDiscontinuity()
