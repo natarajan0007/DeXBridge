@@ -1,58 +1,30 @@
-# Connect the Galaxy S24 Ultra to Family Room TV
+# Cast a Samsung phone to Android TV with Wireless DeX
 
-Current setup, verified 14 October 2026: Samsung Galaxy S24 Ultra → SHARP AQUOS-TVE21F with Wireless DeX. The TV has the DeXBridge receiver app installed and a shell-UID WFD helper deployed. Two DeX connections with a disconnect between them succeeded using the helper source in commit c0632b2.
+Verified 14 October 2026: the NexaRemote phone service restored the TV receiver service and Wi-Fi Direct helper after a TV reboot. The TV reappeared in Samsung DeX discovery, and a connection succeeded without a Mac launch. Two earlier connections with a disconnect between them also succeeded.
 
-## Connect when the TV has not rebooted
+## Everyday use: TV and phone only
 
-1. Turn on the TV and open the installed receiver app if it is not already running. The WFD helper must also be running. The TV should appear to the phone as **Family Room TV**.
-2. On the S24, open **Settings → Connected devices → Samsung DeX → Connect wirelessly**. You can also open the Quick settings panel and tap **DeX**.
-3. Select **Family Room TV**, then tap **Start now**. Accept any connection prompt on the TV and any permission prompt on the phone.
-4. To finish, open **Settings → Connected devices → Samsung DeX → Disconnect display**, or tap the DeX Quick settings tile. Start a fresh search to connect again. The helper restarts the TV's Wi-Fi Direct listener after a disconnect.
+1. Turn on the TV and keep the phone on the same Wi-Fi network. Leave **Keep Wireless DeX available** enabled in NexaRemote. Its notification should say the TV is advertising for Wireless DeX after the TV finishes starting. Recovery can take a few minutes after a reboot.
+2. On the phone, open **Settings → Connected devices → Samsung DeX → Connect wirelessly** (or tap **DeX** in Quick settings).
+3. Select your TV, tap **Start now**, and accept any DeX connection prompt on the TV or phone.
+4. To stop, use **Disconnect display** in Samsung DeX or the DeX Quick settings tile. Start a fresh DeX search to reconnect.
 
-The phone menu and confirmation steps follow [Samsung's Wireless DeX instructions](https://www.samsung.com/us/support/answer/ANS10010217/). The TV-specific result above was verified on this setup.
+Samsung's phone-side steps are in its [Wireless DeX instructions](https://www.samsung.com/us/support/answer/ANS10010217/). The TV-specific recovery behavior above was checked on this setup.
 
-## After the TV reboots
+## Keep discovery available after a TV reboot
 
-The TV reboot ends the receiver process and the shell helper. Git stores the helper source, but it does not start the helper on the TV. Use a Mac with an authorized ADB connection to relaunch both before searching from the S24.
+Connect to the TV in NexaRemote, then tap **Settings → Keep Wireless DeX available → Enable** and enter the TV's network debugging port. NexaRemote keeps a persistent notification while it maintains discovery. If the TV receiver service does not start at boot, NexaRemote starts it in the background, then starts the shell-level Wi-Fi Direct helper.
 
-The TV's tested ADB address was `192.168.1.113:5555`; use its current address if DHCP changes it. The helper dex below is already on this TV at `/data/local/tmp/WfdProbe-recovery-v2-20261014.dex`.
+The TV may label NexaRemote's one-time network debugging authorization **USB debugging** even though the connection is over Wi-Fi. Approve it with **Always allow from this computer** selected. Repeated requests are not normal: stop **Keep Wireless DeX available** and check the TV's network debugging setting and saved authorization before trying again. Earlier development builds retried with stale requests and changed the phone key, causing multiple prompts; the final build authenticated without another prompt.
 
-```sh
-TV_ADB=192.168.1.113:5555
-adb connect "$TV_ADB"
-adb -s "$TV_ADB" shell 'ls -l /data/local/tmp/WfdProbe-recovery-v2-20261014.dex'
-adb -s "$TV_ADB" shell "ps -A -o PID,ARGS | grep '[W]fdProbe 0'"
-```
+Automatic recovery depends on the TV's network debugging endpoint returning after reboot, its address remaining reachable from the phone, and Android allowing NexaRemote's foreground service to run. If the TV address changes, reconnect to it in NexaRemote and update the address in **Keep Wireless DeX available**. Keep NexaRemote installed and allow its persistent notification. If Samsung battery settings stop it, set NexaRemote's battery use to **Unrestricted**.
 
-If the final command shows an `app_process ... WfdProbe 0` process, the helper is already running; do not launch a second one. Otherwise run:
+The receiver app's own auto-start switch was enabled, but it did not start after one reboot. NexaRemote's background start restored it. After a later reboot, the receiver service and helper were running, the TV accepted the Wi-Fi Direct sink advertisement, and the user confirmed a DeX connection.
 
-```sh
-adb -s "$TV_ADB" shell "rm -f /data/local/tmp/wfdprobe.stop; setsid sh -c 'exec app_process -Djava.class.path=/data/local/tmp/WfdProbe-recovery-v2-20261014.dex /data/local/tmp WfdProbe 0 > /data/local/tmp/wfdprobe-recovery-v2-20261014.log 2>&1 </dev/null' >/dev/null 2>&1 &"
-adb -s "$TV_ADB" shell 'am start -n com.weekd.miracastreceiver/.ui.MainActivity'
-adb -s "$TV_ADB" shell 'input keyevent KEYCODE_HOME'
-adb -s "$TV_ADB" shell 'tail -n 15 /data/local/tmp/wfdprobe-recovery-v2-20261014.log'
-adb -s "$TV_ADB" shell "dumpsys wifip2p | grep '^mListenStarted'"
-```
+## If discovery does not recover
 
-Look for `WFD_SINK_ADVERTISEMENT_ACCEPTED`, `P2P_LISTEN_STARTED`, and `mListenStarted true`. Then follow the S24 connection steps above. These checks confirm the TV's local state; the phone finding **Family Room TV** confirms discovery.
+- Check NexaRemote's **Wireless DeX availability** notification. **TV ADB is unavailable** means the TV's network debugging endpoint is off, still starting, or no longer at its configured address. The phone cannot restore the helper until that endpoint is reachable.
+- If the notification says the TV is advertising but DeX cannot find it, start a fresh DeX search. A full TV reboot restored discovery during earlier testing; a Wi-Fi-only reset did not.
+- If the receiver app is stopped, open **DeXBridge Receiver** once on the TV. NexaRemote also tries to restart it automatically.
 
-If the helper dex is missing, run the following from this repository's root with JDK 17 and Android SDK platform 37.0/build-tools 36.0.0 installed. These are the tool versions used for the current deployment. Then run the launch block above.
-
-```sh
-WFD_SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-WFD_BUILD="$(mktemp -d)"
-mkdir -p "$WFD_BUILD/classes" "$WFD_BUILD/dex"
-javac -source 17 -target 17 -cp "$WFD_SDK/platforms/android-37.0/android.jar" -d "$WFD_BUILD/classes" tools/adb-wfd/WfdProbe.java
-"$WFD_SDK/build-tools/36.0.0/d8" --lib "$WFD_SDK/platforms/android-37.0/android.jar" --min-api 34 --output "$WFD_BUILD/dex" "$WFD_BUILD/classes/"*.class
-adb -s "$TV_ADB" push "$WFD_BUILD/dex/classes.dex" /data/local/tmp/WfdProbe-recovery-v2-20261014.dex
-```
-
-The dex is a generated device artifact and is not stored in Git.
-
-## If the TV disappears from DeX discovery
-
-- Check that the helper process and receiver app are running. Inspect `/data/local/tmp/wfdprobe-recovery-v2-20261014.log` on the TV.
-- A TV Wi-Fi-only reset did not restore discovery during testing. A full TV reboot did; after reboot, repeat the Mac/ADB steps above.
-- One earlier connection attempt caused a TV watchdog reboot with an older recovery-helper build. Its cause was not established. The revised helper completed two connections without a reboot; longer-term stability is still unverified.
-
-This procedure is specific to the tested S24 Ultra and Sharp TV. It assumes the receiver app is installed, the TV has granted it display-over-other-apps permission, and Mac ADB access is already authorized.
+This procedure applies to the tested phone and TV. An older helper build coincided with a TV watchdog reboot; its cause was not established. The revised helper completed two earlier connections without a reboot, and phone-driven startup plus one connection succeeded after reboot. Longer-running stability remains unverified.
