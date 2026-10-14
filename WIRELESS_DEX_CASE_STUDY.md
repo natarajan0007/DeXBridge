@@ -1,5 +1,7 @@
 # Getting Samsung Wireless DeX working with an Android TV receiver
 
+For the current user steps and the Mac/ADB restart procedure after a TV reboot, see the [S24-to-Sharp TV runbook](S24_TO_SHARP_TV.md). On 14 October 2026, the revised helper was validated with two DeX connections separated by a disconnect; the historical investigation below records how the initial setup was reached.
+
 This is a field report from getting Samsung Wireless DeX to discover and play on a **SHARP AQUOS-TVE21F** Android TV (Android 14 / API 34, 32-bit ARM), using a Samsung Galaxy S24 Ultra. The receiver is based on the MIT-licensed [MiracastReceiver project](https://github.com/weekdayjast/MiracastReceiver); it is not an entirely original implementation. Keep the upstream license and copyright notice with any fork or redistributed copy.
 
 ## What I built
@@ -42,6 +44,6 @@ The resulting APK is under `app/build/outputs/apk/`. Choose the ABI that matches
 
 ## Limits of this result
 
-This confirms one end-to-end session on one Samsung phone and one Android TV. It does not establish compatibility with every TV, a listener that survives reboot, automatic Wi-Fi Direct name persistence, or a root-free production setup. Some source changes in this working copy still need a clean-install and reboot validation before they should be described as generally supported.
+The initial investigation confirmed one end-to-end session on one Samsung phone and one Android TV. The later two-connection test is recorded in the current runbook. Neither test establishes compatibility with every TV, a listener that survives reboot, automatic Wi-Fi Direct name persistence, or a root-free production setup. A clean-install test remains pending.
 
 The helper's compiled `.class` and `.dex` outputs are local build artifacts and should not be committed. Before publishing a fork, review the complete diff, remove machine-specific configuration and generated files, retain the upstream MIT notice, and publish to a new repository or an explicitly intended fork—not accidentally to the upstream project's remote.

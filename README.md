@@ -19,9 +19,9 @@ The debug APK is written under `MiracastReceiver/app/build/outputs/apk/`. The `b
 
 **Tested TV:** SHARP AQUOS-TVE21F (Android TV 14 / API 34, 32-bit ARM).
 
-The [Wireless DeX case study](WIRELESS_DEX_CASE_STUDY.md) documents the test setup, discovery and playback fixes, diagnostic steps, and limits. The successful setup required the TV to advertise a Wi-Fi Display sink, remain available for the phone to form its Wi-Fi Direct group, and allow the player activity to appear over other apps. Privileged WFD configuration may be device-specific; the app build alone does not grant system permissions or root access.
+The [S24-to-Sharp TV runbook](S24_TO_SHARP_TV.md) gives the current connection and post-reboot steps. The [Wireless DeX case study](WIRELESS_DEX_CASE_STUDY.md) records the discovery and playback investigation. The successful setup required the TV to advertise a Wi-Fi Display sink, remain available for the phone to form its Wi-Fi Direct group, and allow the player activity to appear over other apps. Privileged WFD configuration may be device-specific; the app build alone does not grant system permissions or root access.
 
-This was validated with one Samsung phone and one Android TV. Compatibility with other devices and persistence of the TV's Wi-Fi Direct listener across reboot are not guaranteed.
+This was validated with one Samsung phone and one Android TV, including two DeX connections separated by a disconnect. Compatibility with other devices is unverified. The TV's shell helper ends on reboot and must be relaunched through Mac ADB.
 
 ## License
 
