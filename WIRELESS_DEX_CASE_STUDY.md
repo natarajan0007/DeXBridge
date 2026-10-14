@@ -1,10 +1,10 @@
 # Getting Samsung Wireless DeX working with an Android TV receiver
 
-This is a field report from getting Samsung Wireless DeX to discover and play on an Android TV. The receiver is based on the MIT-licensed [MiracastReceiver project](https://github.com/weekdayjast/MiracastReceiver); it is not an entirely original implementation. Keep the upstream license and copyright notice with any fork or redistributed copy.
+This is a field report from getting Samsung Wireless DeX to discover and play on a **SHARP AQUOS-TVE21F** Android TV (Android 14 / API 34, 32-bit ARM), using a Samsung Galaxy S24 Ultra. The receiver is based on the MIT-licensed [MiracastReceiver project](https://github.com/weekdayjast/MiracastReceiver); it is not an entirely original implementation. Keep the upstream license and copyright notice with any fork or redistributed copy.
 
 ## What I built
 
-I used an Android TV as a Miracast / Wi-Fi Display sink and a Samsung Galaxy S24 Ultra as the source. The receiver already handled the Miracast session and video transport; the hard part was making discovery, connection setup, and Android's playback UI all work together on this particular TV.
+I used the SHARP AQUOS-TVE21F as a Miracast / Wi-Fi Display sink and a Samsung Galaxy S24 Ultra as the source. The receiver already handled the Miracast session and video transport; the hard part was making discovery, connection setup, and Android's playback UI all work together on this particular TV.
 
 The receiver is an Android/Kotlin app. Its Wi-Fi Direct manager advertises the TV as a display sink, its WFD server handles the RTSP connection, and the player renders the incoming stream. The project also supports other casting protocols; this report focuses only on Wireless DeX.
 
