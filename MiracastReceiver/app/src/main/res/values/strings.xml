@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Miracast Receiver</string>
+    <string name="device_name">Smart TV</string>
+    <string name="waiting_connection">Waiting for a cast connection…</string>
+    <string name="device_ip">Device IP: %s</string>
+    <string name="device_info">Device information</string>
+    <string name="connection_code">Connection code: %s</string>
+    <string name="connection_code_label">Connection code</string>
+    <string name="how_to_connect">How to connect</string>
+    <string name="connect_instruction">1. Connect your device and TV to the same Wi-Fi network\n2. Open the casting app on your device\n3. Find and select this TV\n4. Start casting</string>
+
+    <!-- Connection confirmation -->
+    <string name="connect_request">Casting connection request</string>
+    <string name="device_request">%s wants to cast to this TV</string>
+    <string name="allow">Allow</string>
+    <string name="deny">Deny</string>
+    <string name="remember_device">Remember this device</string>
+
+    <!-- Player -->
+    <string name="connected">Connected</string>
+    <string name="playing">Playing</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="device_name_setting">Device name</string>
+    <string name="require_confirmation">Require connection approval</string>
+    <string name="enable_pin">Enable PIN</string>
+    <string name="max_resolution">Maximum resolution</string>
+    <string name="max_framerate">Maximum frame rate</string>
+    <string name="auto_start_on_boot">Start receiver when the TV turns on</string>
+    <string name="auto_start_on_boot_hint">Runs in the background after the TV starts. Some TVs require you to allow this app to start automatically in system settings.</string>
+    <string name="network_diagnostics">Network diagnostics</string>
+    <string name="export_logs">Export logs</string>
+
+    <!-- Errors -->
+    <string name="error_network">Network error</string>
+    <string name="error_connection_failed">Connection failed</string>
+    <string name="error_playback">Playback error</string>
+    <string name="error_unknown">Unknown error</string>
+</resources>
