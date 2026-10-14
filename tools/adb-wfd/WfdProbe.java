@@ -20,6 +20,9 @@ public final class WfdProbe {
     private static boolean changed;
     private static boolean finishing;
     private static boolean persistent;
+    private static Boolean lastNetworkActive;
+    private static boolean recovering;
+    private static boolean refreshScheduled;
     private static final File STOP_FILE = new File("/data/local/tmp/wfdprobe.stop");
 
     public static void main(String[] args) throws Exception {
@@ -147,7 +150,15 @@ public final class WfdProbe {
         if (!persistent || finishing) return;
         manager.requestNetworkInfo(channel, network -> {
             if (finishing) return;
-            if (network != null && network.isConnectedOrConnecting()) {
+            boolean networkActive = network != null && network.isConnectedOrConnecting();
+            if (lastNetworkActive != null && lastNetworkActive && !networkActive) {
+                System.out.println("P2P session ended; restarting WFD listen state.");
+                lastNetworkActive = false;
+                recoverAfterDisconnect();
+                return;
+            }
+            lastNetworkActive = networkActive;
+            if (networkActive) {
                 System.out.println("P2P session in progress; leaving radio unchanged.");
                 scheduleMaintenance(5000L);
                 return;
@@ -163,6 +174,7 @@ public final class WfdProbe {
                             if (finishing) return;
                             System.out.println("P2P_LISTEN_STARTED; refreshing sink advertisement.");
                             refreshAdvertisement();
+                            scheduleMaintenance(5000L);
                         }
                         public void onFailure(int reason) {
                             System.err.println("P2P listen failed: " + reason);
@@ -174,32 +186,97 @@ public final class WfdProbe {
         });
     }
 
+    /**
+     * Android may leave the old P2P listen state up after a source disconnects.
+     * Samsung then misses the next discovery scan. Force a clean listen cycle.
+     */
+    private static void recoverAfterDisconnect() {
+        if (!persistent || finishing || recovering) return;
+        recovering = true;
+        manager.stopListening(channel, new WifiP2pManager.ActionListener() {
+            public void onSuccess() { reapplyAndStartListening(); }
+            public void onFailure(int reason) {
+                System.err.println("P2P listen stop after disconnect failed: " + reason);
+                reapplyAndStartListening();
+            }
+        });
+    }
+
+    private static void reapplyAndStartListening() {
+        if (finishing) return;
+        handler.postDelayed(() -> {
+            if (finishing) return;
+            try {
+                setInfo.invoke(manager, channel, sinkInfo, new WifiP2pManager.ActionListener() {
+                    public void onSuccess() { startListeningAfterRecovery(); }
+                    public void onFailure(int reason) {
+                        System.err.println("WFD reapply after disconnect failed: " + reason);
+                        startListeningAfterRecovery();
+                    }
+                });
+            } catch (Exception error) {
+                error.printStackTrace();
+                startListeningAfterRecovery();
+            }
+        }, 500L);
+    }
+
+    private static void startListeningAfterRecovery() {
+        if (finishing) return;
+        manager.startListening(channel, new WifiP2pManager.ActionListener() {
+            public void onSuccess() {
+                recovering = false;
+                System.out.println("P2P listen restarted after source disconnect.");
+                refreshAdvertisement();
+                scheduleMaintenance(15_000L);
+            }
+            public void onFailure(int reason) {
+                System.err.println("P2P listen restart failed: " + reason);
+                recovering = false;
+                scheduleMaintenance(5000L);
+            }
+        });
+    }
+
     private static void scheduleMaintenance(long delay) {
         if (!finishing) handler.postDelayed(WfdProbe::maintainRadio, delay);
     }
 
     private static void scheduleWfdRefresh(long delay) {
-        if (!finishing) handler.postDelayed(WfdProbe::refreshAdvertisement, delay);
+        if (finishing || refreshScheduled) return;
+        refreshScheduled = true;
+        handler.postDelayed(() -> {
+            refreshScheduled = false;
+            refreshAdvertisement();
+        }, delay);
     }
 
     /** Reapply WFD after enabling a radio that may have been idle-shut down. */
     private static void refreshAdvertisement() {
         if (!persistent || finishing) return;
-        try {
-            setInfo.invoke(manager, channel, sinkInfo, new WifiP2pManager.ActionListener() {
-                public void onSuccess() {
-                    System.out.println("WFD sink advertisement refreshed.");
-                    scheduleWfdRefresh(30_000L);
-                }
-                public void onFailure(int reason) {
-                    System.err.println("WFD refresh failed: " + reason);
-                    if (!finishing) handler.postDelayed(WfdProbe::refreshAdvertisement, 5000L);
-                }
-            });
-        } catch (Exception error) {
-            error.printStackTrace();
-            if (!finishing) handler.postDelayed(WfdProbe::refreshAdvertisement, 5000L);
-        }
+        manager.requestNetworkInfo(channel, network -> {
+            if (finishing) return;
+            if (network != null && network.isConnectedOrConnecting()) {
+                System.out.println("WFD refresh deferred during P2P session.");
+                scheduleWfdRefresh(30_000L);
+                return;
+            }
+            try {
+                setInfo.invoke(manager, channel, sinkInfo, new WifiP2pManager.ActionListener() {
+                    public void onSuccess() {
+                        System.out.println("WFD sink advertisement refreshed.");
+                        scheduleWfdRefresh(30_000L);
+                    }
+                    public void onFailure(int reason) {
+                        System.err.println("WFD refresh failed: " + reason);
+                        scheduleWfdRefresh(5000L);
+                    }
+                });
+            } catch (Exception error) {
+                error.printStackTrace();
+                scheduleWfdRefresh(5000L);
+            }
+        });
     }
 
     private static void finish(String reason) {
