@@ -30,16 +30,19 @@ class RtpReceiver(
         private set
 
     private val renderer = MiracastVideoRenderer(surfaceProvider) { frameOutputCount.incrementAndGet() }
+    private val videoPipeline = MiracastVideoPipeline(renderer)
     private val audioPlayer = MiracastAudioPlayer()
     private val demuxer = TsDemuxer(
-        onAccessUnit = renderer::onAccessUnit,
-        onDiscontinuity = renderer::onDiscontinuity,
+        onAccessUnit = videoPipeline::onAccessUnit,
+        onDiscontinuity = videoPipeline::onDiscontinuity,
 
         onAudioPes = { codec, data -> if (surfaceProvider() != null) audioPlayer.onAudioPes(codec, data) },
         onAudioDiscontinuity = audioPlayer::onDiscontinuity
     )
 
-    private val payloadQueue = ArrayBlockingQueue<ByteArray>(PAYLOAD_QUEUE_CAPACITY)
+    private data class QueuedPayload(val data: ByteArray, val discontinuityBefore: Boolean)
+
+    private val payloadQueue = ArrayBlockingQueue<QueuedPayload>(PAYLOAD_QUEUE_CAPACITY)
 
     val queuedPayloads: Int
         get() = payloadQueue.size
@@ -60,7 +63,9 @@ class RtpReceiver(
 
     companion object {
 
-        const val PAYLOAD_QUEUE_CAPACITY = 256
+        // About half a second at the observed ~1,000 RTP packets/s. Absorbs
+        // Wi-Fi Direct bursts without immediately discarding a whole GOP.
+        const val PAYLOAD_QUEUE_CAPACITY = 512
 
         @Volatile
         var active: RtpReceiver? = null
@@ -73,6 +78,8 @@ class RtpReceiver(
         }
 
         active = this
+
+        videoPipeline.start()
 
         scope.launch { runDecoder() }
 
@@ -90,6 +97,7 @@ class RtpReceiver(
                 val packet = DatagramPacket(buffer, buffer.size)
                 var loggedFirst = false
                 var expectedSeq = -1
+                var queueHighWater = 0
 
                 while (isRunning) {
                     try {
@@ -112,26 +120,33 @@ class RtpReceiver(
 
                         val seq = ((packet.data[2].toInt() and 0xFF) shl 8) or
                             (packet.data[3].toInt() and 0xFF)
-                        if (expectedSeq >= 0 && seq != expectedSeq) {
+                        var discontinuity = expectedSeq >= 0 && seq != expectedSeq
+                        if (discontinuity) {
                             val lost = (seq - expectedSeq + 0x10000) and 0xFFFF
                             packetsLost += lost
                             Timber.w("RTP: lost $lost packets (seq $expectedSeq → $seq)")
-                            renderer.onDiscontinuity()
-                            audioPlayer.onDiscontinuity()
                         }
                         expectedSeq = (seq + 1) and 0xFFFF
 
                         val payload = packet.data.copyOfRange(payloadOffset, packet.length)
-                        if (!payloadQueue.offer(payload)) {
-                            if (payloadQueue.poll() != null) payloadsDropped++
-                            payloadQueue.offer(payload)
-                            renderer.onDiscontinuity()
-                            audioPlayer.onDiscontinuity()
+                        if (!payloadQueue.offer(QueuedPayload(payload, discontinuity))) {
+                            // Old transport data cannot be played in real time after overflow.
+                            // Discard it as one batch, then resync on the decoder thread so a
+                            // queued old keyframe cannot accidentally clear the loss state.
+                            val removed = ArrayList<QueuedPayload>(PAYLOAD_QUEUE_CAPACITY)
+                            payloadQueue.drainTo(removed)
+                            payloadsDropped += removed.size
+                            discontinuity = true
+                            payloadQueue.offer(QueuedPayload(payload, discontinuity))
                         }
+                        queueHighWater = maxOf(queueHighWater, payloadQueue.size)
 
                         if (packetsReceived % 1000L == 0L) {
                             Timber.i("RTP stats: $packetsReceived packets, ${bytesReceived / 1024}KB, " +
-                                "lost=$packetsLost, queue=${payloadQueue.size}")
+                                "lost=$packetsLost, queue=${payloadQueue.size}, highWater=$queueHighWater, " +
+                                "payloadDropped=$payloadsDropped, videoQueue=${videoPipeline.queuedUnits}, " +
+                                "videoDropped=${videoPipeline.droppedUnits}, frames=$framesOutput")
+                            queueHighWater = payloadQueue.size
                         }
                     } catch (e: Exception) {
                         if (isRunning) Timber.e(e, "Error receiving RTP packet")
@@ -147,14 +162,19 @@ class RtpReceiver(
 
     private suspend fun runDecoder() {
         while (scope.isActive) {
-            val payload = withContext(Dispatchers.IO) {
+            val queued = withContext(Dispatchers.IO) {
                 payloadQueue.poll(200, TimeUnit.MILLISECONDS)
             } ?: continue
             try {
-                demuxer.feed(payload, 0, payload.size)
+                if (queued.discontinuityBefore) {
+                    demuxer.onTransportDiscontinuity()
+                    videoPipeline.onDiscontinuity()
+                    audioPlayer.onDiscontinuity()
+                }
+                demuxer.feed(queued.data, 0, queued.data.size)
             } catch (e: Exception) {
                 Timber.e(e, "Error demuxing TS payload")
-                renderer.onDiscontinuity()
+                videoPipeline.onDiscontinuity()
             }
         }
     }
@@ -180,7 +200,7 @@ class RtpReceiver(
     fun stop() {
         isRunning = false
         scope.cancel()
-        renderer.release()
+        videoPipeline.stop()
         audioPlayer.release()
         demuxer.reset()
         if (active === this) active = null

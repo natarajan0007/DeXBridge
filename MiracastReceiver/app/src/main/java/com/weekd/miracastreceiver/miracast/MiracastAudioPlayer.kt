@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 class MiracastAudioPlayer {
 
@@ -35,14 +36,23 @@ class MiracastAudioPlayer {
     private var trackChannels = 0
     private val adts = ByteArrayOutputStream(16 * 1024)
     private var firstPcm = true
-    private var droppedPes = 0L
+    private val receivedPes = AtomicLong()
+    private val droppedPes = AtomicLong()
+    private var processedPes = 0L
+    private var decodedAacFrames = 0L
+    private var codecInputMisses = 0L
+    private var pcmWriteCount = 0L
+    private var pcmWriteTimeNs = 0L
+    private var maxPcmWriteNs = 0L
 
     companion object {
 
         private const val QUEUE_CAPACITY = 64
 
-        private const val MAX_BACKLOG = 8
-        private const val QUEUE_KEEP = 2
+        // AAC is 1024 samples per PES at 48 kHz (~21 ms). Allow brief Wi-Fi
+        // bursts to drain before skipping audio; retain ~170 ms after resync.
+        private const val MAX_BACKLOG = 32
+        private const val QUEUE_KEEP = 8
 
         private val SAMPLE_RATES = intArrayOf(
             96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350
@@ -52,11 +62,12 @@ class MiracastAudioPlayer {
     fun onAudioPes(codecType: TsDemuxer.AudioCodec, data: ByteArray) {
         if (released) return
         if (!running) start()
+        receivedPes.incrementAndGet()
         val item = codecType to data
         if (!queue.offer(item)) {
             queue.poll()
             queue.offer(item)
-            droppedPes++
+            droppedPes.incrementAndGet()
         }
     }
 
@@ -82,39 +93,56 @@ class MiracastAudioPlayer {
 
     private fun runPlayback() {
         Timber.i("Miracast audio: playback thread started")
+        var lastStatsNs = System.nanoTime()
         try {
             while (running) {
-                val (type, data) = try {
+                var item = try {
                     queue.poll(200, TimeUnit.MILLISECONDS)
                 } catch (e: InterruptedException) {
                     null
                 } ?: continue
 
                 if (queue.size > MAX_BACKLOG) {
-                    var dropped = 0
+                    // The polled item is the oldest one. Discard it too; playing
+                    // stale audio immediately before jumping forward is audible.
+                    var dropped = 1
                     while (queue.size > QUEUE_KEEP) {
                         queue.poll()
                         dropped++
                     }
-                    droppedPes += dropped
+                    droppedPes.addAndGet(dropped.toLong())
                     resyncRequested = true
-                    Timber.w("Miracast audio: behind real time, dropped $dropped PES (total $droppedPes)")
+                    Timber.w("Miracast audio: behind real time, dropped $dropped PES " +
+                        "(total ${droppedPes.get()})")
+                    item = queue.poll() ?: continue
                 }
 
                 try {
+                    val (type, data) = item
                     when (type) {
                         TsDemuxer.AudioCodec.AAC_ADTS -> handleAac(data)
                         TsDemuxer.AudioCodec.LPCM -> handleLpcm(data)
                     }
+                    processedPes++
                 } catch (e: Exception) {
                     if (running) Timber.e(e, "Miracast audio: decode error")
                     releaseCodec()
+                }
+
+                val nowNs = System.nanoTime()
+                if (nowNs - lastStatsNs >= TimeUnit.SECONDS.toNanos(5)) {
+                    Timber.i("Miracast audio stats: received=${receivedPes.get()}, " +
+                        "processed=$processedPes, dropped=${droppedPes.get()}, queue=${queue.size}, " +
+                        "decodedFrames=$decodedAacFrames, inputMisses=$codecInputMisses, " +
+                        "pcmWrites=$pcmWriteCount, avgWriteMs=${if (pcmWriteCount > 0) pcmWriteTimeNs / pcmWriteCount / 1_000_000 else 0}, " +
+                        "maxWriteMs=${maxPcmWriteNs / 1_000_000}")
+                    lastStatsNs = nowNs
                 }
             }
         } finally {
             releaseCodec()
             releaseTrack()
-            Timber.i("Miracast audio: playback thread stopped, dropped $droppedPes PES")
+            Timber.i("Miracast audio: playback thread stopped, dropped ${droppedPes.get()} PES")
         }
     }
 
@@ -191,6 +219,8 @@ class MiracastAudioPlayer {
             inBuf.clear()
             inBuf.put(buf, offset, length)
             mc.queueInputBuffer(inIdx, 0, length, 0, 0)
+        } else {
+            codecInputMisses++
         }
 
         val info = MediaCodec.BufferInfo()
@@ -203,6 +233,7 @@ class MiracastAudioPlayer {
                     outBuf.position(info.offset)
                     outBuf.get(pcm)
                     mc.releaseOutputBuffer(outIdx, false)
+                    decodedAacFrames++
                     writePcm(pcm, pcm.size)
                 }
                 outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
@@ -297,7 +328,12 @@ class MiracastAudioPlayer {
             Timber.i("Miracast audio: first PCM (${length}B) → AudioTrack")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val startNs = System.nanoTime()
             track.write(pcm, 0, length, AudioTrack.WRITE_BLOCKING)
+            val writeNs = System.nanoTime() - startNs
+            pcmWriteCount++
+            pcmWriteTimeNs += writeNs
+            maxPcmWriteNs = maxOf(maxPcmWriteNs, writeNs)
         } else {
             @Suppress("DEPRECATION")
             track.write(pcm, 0, length)

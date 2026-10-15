@@ -117,4 +117,21 @@ class TsDemuxerTest {
         assertEquals(1, audioGaps)
         assertEquals(0, audioUnits.size)
     }
+
+    @Test
+    fun transportLossDiscardsPartialPesWithoutForgettingStreamPids() {
+        val stale = byteArrayOf(0, 0, 0, 1, 0x65, 1, 2, 3)
+        val fresh = byteArrayOf(0, 0, 0, 1, 0x65, 4, 5, 6)
+        val following = byteArrayOf(0, 0, 0, 1, 0x41, 7, 8, 9)
+        feed(pat(), pmt(0x0F), tsPacket(0x1011, true, pes(0xE0, stale, withLength = false)))
+
+        demuxer.onTransportDiscontinuity()
+        feed(tsPacket(0x1011, false, byteArrayOf(10, 11, 12)))
+        assertEquals(0, videoUnits.size)
+
+        feed(tsPacket(0x1011, true, pes(0xE0, fresh, withLength = false)),
+            tsPacket(0x1011, true, pes(0xE0, following, withLength = false)))
+        assertEquals(1, videoUnits.size)
+        assertArrayEquals(fresh, videoUnits.single())
+    }
 }

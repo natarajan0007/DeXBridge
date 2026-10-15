@@ -138,6 +138,11 @@ class TsDemuxer(
         pmtPid = -1
         videoPid = -1
         audioPid = -1
+        onTransportDiscontinuity()
+    }
+
+    /** Discard incomplete PES after RTP loss while retaining negotiated stream PIDs. */
+    fun onTransportDiscontinuity() {
         videoPes.reset()
         audioPes.reset()
     }

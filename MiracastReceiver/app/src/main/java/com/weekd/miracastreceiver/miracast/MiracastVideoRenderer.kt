@@ -32,7 +32,7 @@ class MiracastVideoRenderer(
             return
         }
 
-        if (decoder == null || surface !== configuredSurface) {
+        if (decoder == null || decoder?.isHealthy == false || surface !== configuredSurface) {
             if (!rebuildDecoder(surface)) {
                 droppedBeforeConfig++
                 if (droppedBeforeConfig % 60 == 0) {
@@ -42,13 +42,15 @@ class MiracastVideoRenderer(
             }
         }
 
-        if (awaitingKeyframe) {
-            if (!containsIdr(unit)) return
-            awaitingKeyframe = false
-            Timber.i("Miracast: keyframe found, decoding started")
+        if (awaitingKeyframe && !containsIdr(unit)) return
+        if (decoder?.decodeNalUnit(unit, ptsUs) == true) {
+            if (awaitingKeyframe) {
+                awaitingKeyframe = false
+                Timber.i("Miracast: keyframe accepted, decoding started")
+            }
+        } else {
+            onDiscontinuity()
         }
-
-        decoder?.decodeNalUnit(unit, ptsUs)
     }
 
     private fun rebuildDecoder(surface: Surface): Boolean {
@@ -57,7 +59,9 @@ class MiracastVideoRenderer(
 
         releaseDecoder()
         val (width, height) = VideoDecoder.parseSpsResolution(spsBytes) ?: (1920 to 1080)
-        decoder = VideoDecoder(surface, onFrameOutput).also {
+        // This runs on the separate Miracast video worker. Allow one 30 fps
+        // frame period for a transient codec stall before losing the GOP.
+        decoder = VideoDecoder(surface, onFrameOutput, 33_000L).also {
             it.initialize(spsBytes, ppsBytes, width, height)
         }
         configuredSurface = surface

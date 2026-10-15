@@ -30,7 +30,8 @@ import com.weekd.miracastreceiver.util.Logger
  */
 class VideoDecoder(
     private val outputSurface: Surface,
-    private val onFrameOutput: (() -> Unit)? = null
+    private val onFrameOutput: (() -> Unit)? = null,
+    private val inputBufferTimeoutUs: Long = INPUT_BUFFER_TIMEOUT_US
 ) {
 
     // The underlying hardware decoder — null until initialize() is called
@@ -190,17 +191,18 @@ class VideoDecoder(
      * @param nalUnit The raw NAL unit bytes (without the RTP header).
      * @param presentationTimeUs Presentation timestamp in microseconds (for A/V sync).
      */
-    fun decodeNalUnit(nalUnit: ByteArray, presentationTimeUs: Long) {
+    /** Returns false when this access unit was not accepted by the codec. */
+    fun decodeNalUnit(nalUnit: ByteArray, presentationTimeUs: Long): Boolean {
         val codec = mediaCodec ?: run {
             Logger.w("decodeNalUnit() called but decoder not initialized")
-            return
+            return false
         }
 
         try {
 
-            // Wait for an input buffer. Longer than before: on a modest SoC the decoder can
-            // briefly fall behind, and waiting beats dropping (which corrupts the stream).
-            val inputBufferIndex = codec.dequeueInputBuffer(INPUT_BUFFER_TIMEOUT_US)
+            // Wait for an input buffer. Miracast uses a shorter bound on its
+            // separate video worker so stale frames cannot pile up indefinitely.
+            val inputBufferIndex = codec.dequeueInputBuffer(inputBufferTimeoutUs)
 
             if (inputBufferIndex >= 0) {
                 // We got an input buffer — fill it with the NAL unit bytes
@@ -217,17 +219,21 @@ class VideoDecoder(
                     presentationTimeUs,
                     0                  // flags: 0 = normal frame (not end-of-stream)
                 )
+                return true
             } else {
                 // No input buffer available — the decoder is catching up.
                 // Drop this NAL unit to avoid building up backlog (prefer low latency).
                 Logger.v("VideoDecoder: no input buffer available, dropping NAL unit")
+                return false
             }
         } catch (e: IllegalStateException) {
             // MediaCodec is now in the error state and cannot recover — flag for recreation.
             Logger.e("VideoDecoder entered error state — will recreate", e)
             isHealthy = false
+            return false
         } catch (e: Exception) {
             Logger.e("Error decoding NAL unit", e)
+            return false
         }
     }
 
